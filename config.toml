@@ -11,6 +11,9 @@ protein_g_per_day = 165
 fat_max_g_per_day = 62
 # Floor so plans stay healthy (very low-fat days hurt hormones + vitamin absorption).
 fat_min_g_per_day = 40
+# Sodium limit (mg). 2,300 mg is the standard daily guideline. This is a softer limit than fat:
+# the planner prefers lower-sodium choices but won't wreck a meal to hit it. Set to 0 to ignore sodium.
+sodium_max_mg_per_day = 2300
 
 # How the day's calories/protein are split between meals (should add up to 1.0).
 # On weekends South serves Brunch instead of Breakfast + Lunch; brunch gets both shares.
@@ -38,8 +41,9 @@ prefer_words = ["chicken", "turkey", "egg whites", "greek yogurt"]
 # Exact item names to ignore (use this if an item's listed numbers look wrong to you)
 ignore_items = []
 
-# Skip single items where more than this % of calories come from fat (keeps plans lean).
-max_fat_percent_per_item = 40
+# Skip single items where more than this % of calories come from fat. 60 still allows salmon and
+# roast beef (the daily fat limit above keeps the total lean) but drops fried and cheesy items.
+max_fat_percent_per_item = 60
 
 [menu]
 # Nutrislice slug for the dining hall (South only for now; North is "north-dining-hall").

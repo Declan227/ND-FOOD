@@ -79,6 +79,7 @@ class Item:
     protein: float | None
     fat: float | None
     carbs: float | None
+    sodium: float  # mg; 0 when not listed
     amount: float
     unit: str
     tags: set[str]
@@ -160,6 +161,7 @@ def parse_day(raw_day: dict, meal: str) -> list[Item]:
             protein=_num(nut.get("g_protein")),
             fat=_num(nut.get("g_fat")) or 0.0,
             carbs=_num(nut.get("g_carbs")) or 0.0,
+            sodium=_num(nut.get("mg_sodium")) or 0.0,
             amount=_num(size.get("serving_size_amount")) or 1.0,
             unit=(size.get("serving_size_unit") or "serving").strip(),
             tags={i.get("slug", "") for i in (food.get("icons") or {}).get("food_icons", [])},
@@ -253,6 +255,7 @@ class Planner:
         self.pro_day = float(t["protein_g_per_day"])
         self.fat_day = float(t["fat_max_g_per_day"])
         self.fat_min_day = float(t.get("fat_min_g_per_day", 0))
+        self.sodium_day = float(t.get("sodium_max_mg_per_day", 0))  # 0 = don't limit
         f = cfg["food"]
         self.avoid = [a.lower() for a in f.get("avoid", [])]
         self.diet = (f.get("diet") or "").lower()
@@ -298,10 +301,10 @@ class Planner:
 
     # --- meal optimisation ---
     def plan_meal(self, items: list[Item], cal_t: float, pro_t: float, fat_t: float, fat_min: float,
-                  used: set[str], recent: set[str]) -> dict | None:
+                  used: set[str], recent: set[str], sodium_t: float = 0.0) -> dict | None:
         """Pick 1-2 protein items + 0-2 carb sides + 0-1 vegetable, with portions, closest to the targets.
 
-        `used` = protein items already planned earlier today; `recent` = items in this meal yesterday.
+        `used` = items already planned earlier today; `recent` = items in this meal yesterday.
         Both get a small penalty so plans vary when the menu allows it.
         """
         pool: dict[str, list[Item]] = {"protein": [], "carb": [], "veg": []}
@@ -326,12 +329,14 @@ class Planner:
         def item_pen(it: Item, role: str) -> float:
             pen = 0.012 - 0.02 * self.preferred(it) - 0.01 * ("high-performance" in it.tags)
             pen += 0.04 * (it.name in recent)
+            # Repeating something already eaten earlier today: strong nudge for mains, lighter for sides.
+            pen += (0.15 if role == "protein" else 0.06) * (it.name in used)
             if role == "protein":
-                pen += 0.05 * (it.name in used) - 0.03 * (it.protein >= 15)
+                pen -= 0.03 * (it.protein >= 15)
             return pen
 
         def options(pool_items: list[Item], role: str, max_items: int) -> list[tuple]:
-            """All (combo, cal, protein, fat, penalty) for up to max_items distinct items of a role."""
+            """All (combo, cal, protein, fat, sodium, penalty) for up to max_items distinct items of a role."""
             singles = [((it, s, role),) for it in pool_items for s in portion_options(it, role)]
             combos = [()] if role != "protein" else []
             combos += singles
@@ -340,7 +345,8 @@ class Planner:
             out = []
             for c in combos:
                 out.append((c, sum(i.cal * s for i, s, _ in c), sum(i.protein * s for i, s, _ in c),
-                            sum(i.fat * s for i, s, _ in c), sum(item_pen(i, r) for i, _, r in c)))
+                            sum(i.fat * s for i, s, _ in c), sum(i.sodium * s for i, s, _ in c),
+                            sum(item_pen(i, r) for i, _, r in c)))
             return out
 
         prot_opts = options(prot, "protein", 2)
@@ -350,13 +356,13 @@ class Planner:
         window = 0.25 * cal_t
 
         best, best_score = None, float("inf")
-        for pc, p_cal, p_pro, p_fat, p_pen in prot_opts:
+        for pc, p_cal, p_pro, p_fat, p_na, p_pen in prot_opts:
             if p_cal > cal_t * 1.2:
                 continue
             rem = cal_t - p_cal
             lo, hi = bisect.bisect_left(carb_cals, rem - window - 60), bisect.bisect_right(carb_cals, rem + window)
-            for cc, c_cal, c_pro, c_fat, c_pen in carb_opts[lo:hi]:
-                for vc, v_cal, v_pro, v_fat, v_pen in veg_opts:
+            for cc, c_cal, c_pro, c_fat, c_na, c_pen in carb_opts[lo:hi]:
+                for vc, v_cal, v_pro, v_fat, v_na, v_pen in veg_opts:
                     if vc and any(vc[0][0] is x[0] for x in pc + cc):
                         continue
                     cal, pro, fat = p_cal + c_cal + v_cal, p_pro + c_pro + v_pro, p_fat + c_fat + v_fat
@@ -369,7 +375,11 @@ class Planner:
                     if fat > fat_t:
                         score += 3 * ((fat - fat_t) / fat_t) ** 2
                     elif fat < fat_min:
-                        score += 1.5 * ((fat_min - fat) / fat_min) ** 2
+                        score += 3 * ((fat_min - fat) / fat_min) ** 2
+                    # Sodium is a softer limit than fat: gently steer away, never force a bad meal.
+                    na = p_na + c_na + v_na
+                    if sodium_t and na > sodium_t:
+                        score += 0.8 * ((na - sodium_t) / sodium_t) ** 2
                     if score < best_score:
                         best, best_score = pc + cc + vc, score
         if best is None:
@@ -381,12 +391,14 @@ class Planner:
                 "item": it, "servings": s, "role": role,
                 "portion": describe_portion(it, s),
                 "cal": it.cal * s, "protein": it.protein * s, "fat": it.fat * s, "carbs": it.carbs * s,
+                "sodium": it.sodium * s,
                 "swaps": self.swaps(it, s, role, pool[role], chosen),
             })
         return {
             "lines": lines,
             "cal": sum(l["cal"] for l in lines), "protein": sum(l["protein"] for l in lines),
             "fat": sum(l["fat"] for l in lines), "carbs": sum(l["carbs"] for l in lines),
+            "sodium": sum(l["sodium"] for l in lines),
             "cal_target": cal_t, "protein_target": pro_t,
         }
 
@@ -425,12 +437,12 @@ class Planner:
                 pro_t = max(15.0, share * self.pro_day + max(-15.0, min(15.0, carry_pro)))
                 fat_min = cal_t * self.fat_min_day / self.cal_day
                 plan = self.plan_meal(res.items, cal_t, pro_t, cal_t * fat_share, fat_min, used,
-                                      (recent or {}).get(meal, set()))
+                                      (recent or {}).get(meal, set()), share * self.sodium_day)
                 if plan:
                     entry["plan"] = plan
                     carry_cal = cal_t - plan["cal"]
                     carry_pro = pro_t - plan["protein"]
-                    used |= {l["item"].name for l in plan["lines"] if l["role"] == "protein"}
+                    used |= {l["item"].name for l in plan["lines"] if l["role"] != "veg"}
                 else:
                     entry["message"] = "Menu retrieved, but no items fit your filters with nutrition data."
             meals.append(entry)
@@ -439,6 +451,7 @@ class Planner:
             "date": day, "meals": meals,
             "cal": sum(p["cal"] for p in planned), "protein": sum(p["protein"] for p in planned),
             "fat": sum(p["fat"] for p in planned), "carbs": sum(p["carbs"] for p in planned),
+            "sodium": sum(p["sodium"] for p in planned),
             "all_planned": all(m["plan"] for m in meals if m["share"] > 0),
             "any_menu": any(m["status"] == "ok" for m in meals),
         }
@@ -473,7 +486,7 @@ def status_lines(days: list[dict]) -> list[tuple[str, str]]:
 
 def sources_note(cfg: dict) -> str:
     return (
-        "<b>Where the numbers come from:</b> every calorie, protein and fat value is the per-serving "
+        "<b>Where the numbers come from:</b> every calorie, protein, carb, fat and sodium value is the per-serving "
         "figure Notre Dame publishes on Nutrislice for that exact day and meal (click the meal's "
         "“source” link). When a plan says 2× or 6 oz, the listed values are simply multiplied by that "
         "many servings; that multiplication is the only estimate. Servers don't weigh portions, so "
@@ -500,10 +513,12 @@ nav{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
 nav a{padding:6px 12px;border-radius:999px;background:var(--chip);color:var(--ink);text-decoration:none;font-size:.9rem}
 nav a.active{background:var(--accent);color:var(--bg)}
 .day{display:none}.day.active{display:block}.nojs .day{display:block;margin-bottom:28px}
-.totals{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin:10px 0}
 .tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
 .tile b{font-size:1.15rem;display:block}.bar{height:6px;background:var(--chip);border-radius:3px;margin-top:4px;overflow:hidden}
-.bar i{display:block;height:100%;background:var(--gold)}
+.bar i{display:block;height:100%;background:var(--gold)}.bar i.over{background:var(--err)}
+.macros{display:none;font-size:.82rem;margin-top:2px}
+@media (max-width:620px){td.n,th.n{display:none}.macros{display:block}}
 .meal{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:12px 0}
 .meal header{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
 table{width:100%;border-collapse:collapse;margin-top:8px;font-size:.92rem}
@@ -537,26 +552,40 @@ def render_meal(m: dict, cfg: dict) -> str:
             for s in l["swaps"])
         rows.append(
             f"<tr><td><b>{esc(it.name)}</b><span class='tag'>{esc(it.station)}</span>"
-            f"<div class='small muted'>{esc(l['portion'])}</div>{swaps}</td>"
-            f"<td class='n'>{l['cal']:.0f}</td><td class='n'>{l['protein']:.0f} g</td><td class='n'>{l['fat']:.0f} g</td></tr>")
+            f"<div class='small muted'>{esc(l['portion'])}</div>{macro_line(l)}{swaps}</td>{macro_cells(l)}</tr>")
     rows.append(f"<tr class='sum'><td>Meal total <span class='small muted'>(target ≈ {p['cal_target']:.0f} cal, "
-                f"{p['protein_target']:.0f} g P)</span></td><td class='n'>{p['cal']:.0f}</td>"
-                f"<td class='n'>{p['protein']:.0f} g</td><td class='n'>{p['fat']:.0f} g</td></tr>")
+                f"{p['protein_target']:.0f} g P)</span>{macro_line(p)}</td>{macro_cells(p)}</tr>")
     extra = ""
     if m["missing_nutrition"] or m["suspect"]:
         li = "".join(f"<li>{esc(n)}: no nutrition listed</li>" for n in m["missing_nutrition"])
         li += "".join(f"<li>{esc(n)}: {esc(f)}</li>" for n, f in m["suspect"])
         extra = (f"<details><summary>{len(m['missing_nutrition']) + len(m['suspect'])} item(s) on this menu "
                  f"were skipped for data problems</summary><ul class='small'>{li}</ul></details>")
-    return (f"<section class='meal'>{head}<table><tr><th>Item & portion</th><th class='n'>Cal</th>"
-            f"<th class='n'>Protein</th><th class='n'>Fat</th></tr>{''.join(rows)}</table>{extra}</section>")
+    heads = "".join(f"<th class='n'>{h}</th>" for h in ("Cal", "Protein", "Carbs", "Fat", "Sodium"))
+    return (f"<section class='meal'>{head}<table><tr><th>Item & portion</th>{heads}</tr>"
+            f"{''.join(rows)}</table>{extra}</section>")
 
 
-def tile(label: str, val: float, target: float, unit: str, cap: bool = False) -> str:
+def macro_cells(x: dict) -> str:
+    """Numeric table columns (wide screens)."""
+    return (f"<td class='n'>{x['cal']:.0f}</td><td class='n'>{x['protein']:.0f} g</td>"
+            f"<td class='n'>{x['carbs']:.0f} g</td><td class='n'>{x['fat']:.0f} g</td>"
+            f"<td class='n'>{x['sodium']:,.0f} mg</td>")
+
+
+def macro_line(x: dict) -> str:
+    """Same numbers as one line under the item (phones, where 5 columns don't fit)."""
+    return (f"<div class='macros'>{x['cal']:.0f} cal · <b>{x['protein']:.0f} g protein</b> · "
+            f"{x['carbs']:.0f} g carbs · {x['fat']:.0f} g fat · {x['sodium']:,.0f} mg sodium</div>")
+
+
+def tile(label: str, val: float, target: float, unit: str, cap: bool = False, note: str = "") -> str:
     pct = 0 if target <= 0 else min(100, 100 * val / target)
-    word = "limit" if cap else "target"
-    return (f"<div class='tile'><span class='small muted'>{label}</span><b>{val:.0f}{unit}</b>"
-            f"<span class='small muted'>{word} {target:.0f}{unit}</span><div class='bar'><i style='width:{pct:.0f}%'></i></div></div>")
+    over = cap and target > 0 and val > target
+    sub = note or f"{'limit' if cap else 'target'} {target:,.0f}{unit}"
+    bar = "" if target <= 0 else f"<div class='bar'><i class='{'over' if over else ''}' style='width:{pct:.0f}%'></i></div>"
+    return (f"<div class='tile'><span class='small muted'>{label}</span><b>{val:,.0f}{unit}</b>"
+            f"<span class='small muted'>{sub}</span>{bar}</div>")
 
 
 def render_day(d: dict, cfg: dict, today: dt.date, active: bool) -> str:
@@ -568,15 +597,30 @@ def render_day(d: dict, cfg: dict, today: dt.date, active: bool) -> str:
     else:
         body.append("<div class='totals'>" + tile("Calories", d["cal"], t["calories_per_day"], "")
                     + tile("Protein", d["protein"], t["protein_g_per_day"], " g")
-                    + tile("Fat", d["fat"], t["fat_max_g_per_day"], " g", cap=True) + "</div>")
+                    + tile("Carbs", d["carbs"], 0, " g", note="fills the rest")
+                    + tile("Fat", d["fat"], t["fat_max_g_per_day"], " g", cap=True)
+                    + tile("Sodium", d["sodium"], t.get("sodium_max_mg_per_day", 0), " mg", cap=True,
+                           note="" if t.get("sodium_max_mg_per_day") else "no limit set") + "</div>")
         gap = t["protein_g_per_day"] - d["protein"]
         if d["all_planned"] and gap > 10:
             body.append(f"<div class='banner warn'>Planned meals come up {gap:.0f} g short on protein. "
                         f"Adding a glass of skim milk (8 g) or a Greek yogurt at any meal closes the gap.</div>")
+        na_max = t.get("sodium_max_mg_per_day", 0)
+        if na_max and d["sodium"] > na_max:
+            body.append(f"<div class='banner warn'>Sodium comes to {d['sodium']:,.0f} mg, over your "
+                        f"{na_max:,.0f} mg limit; that's common with dining-hall food. Skipping deli meats, "
+                        f"sauces and soups, and drinking plenty of water, helps.</div>")
     body += [render_meal(m, cfg) for m in d["meals"]]
     iso = d["date"].isoformat()
     return (f"<section class='day{' active' if active else ''}' id='d{iso}'>"
             f"<h2>{day_label(d['date'], today)} · {fmt_day(d['date'])}</h2>{''.join(body)}</section>")
+
+
+def goal_text(t: dict) -> str:
+    text = f"{t['calories_per_day']:,} cal · {t['protein_g_per_day']} g protein · ≤ {t['fat_max_g_per_day']} g fat"
+    if t.get("sodium_max_mg_per_day"):
+        text += f" · ≤ {t['sodium_max_mg_per_day']:,} mg sodium"
+    return text
 
 
 def render_page(days: list[dict], cfg: dict, today: dt.date, checked: dt.datetime) -> str:
@@ -597,7 +641,7 @@ def render_page(days: list[dict], cfg: dict, today: dt.date, checked: dt.datetim
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>ND South Meal Plan</title>
 <style>{CSS}</style></head><body class="nojs"><main>
 <h1>South Dining Hall meal plan</h1>
-<div class="muted small">Goal: {t['calories_per_day']} cal · {t['protein_g_per_day']} g protein · ≤ {t['fat_max_g_per_day']} g fat per day.
+<div class="muted small">Goal: {goal_text(t)} per day.
 Menus last checked <b>{checked.strftime('%a %b %-d, %-I:%M %p')} ET</b> (refreshes about hourly).</div>
 <div class="banner {banner[0]}">{esc(banner[1])}{issue_html}</div>
 <nav>{nav}</nav>
@@ -621,7 +665,7 @@ def render_email(days: list[dict], cfg: dict, today: dt.date, checked: dt.dateti
     tdn = "style='padding:4px 6px;border-top:1px solid #ddd;text-align:right;white-space:nowrap'"
     parts = [f"<div style='font-family:Arial,sans-serif;font-size:14px;color:#1c2230;max-width:640px'>",
              f"<p style='color:#5d6678'>Menus checked {checked.strftime('%-I:%M %p ET, %a %b %-d')}. "
-             f"Goal {t['calories_per_day']} cal · {t['protein_g_per_day']} g protein · ≤ {t['fat_max_g_per_day']} g fat.</p>"]
+             f"Goal {goal_text(t)}.</p>"]
     issues = status_lines(days)
     if issues:
         parts.append("<p style='background:#fdecea;padding:8px;border-radius:6px'><b>⚠️ Problems:</b><br>"
@@ -631,7 +675,8 @@ def render_email(days: list[dict], cfg: dict, today: dt.date, checked: dt.dateti
         if not d["any_menu"]:
             parts.append("<p>No menus available for this day.</p>")
             continue
-        parts.append(f"<p style='margin:0 0 6px'><b>Day total: {d['cal']:.0f} cal · {d['protein']:.0f} g protein · {d['fat']:.0f} g fat</b></p>")
+        parts.append(f"<p style='margin:0 0 6px'><b>Day total: {d['cal']:.0f} cal · {d['protein']:.0f} g protein · "
+                     f"{d['carbs']:.0f} g carbs · {d['fat']:.0f} g fat · {d['sodium']:,.0f} mg sodium</b></p>")
         for m in d["meals"]:
             head = f"<a href='{esc(m['url'])}'>{MEAL_LABEL[m['meal']]}</a> · {esc(cfg['menu']['hall_name'])}"
             if not m["plan"]:
@@ -644,9 +689,12 @@ def render_email(days: list[dict], cfg: dict, today: dt.date, checked: dt.dateti
                 f"<tr><td {td}><b>{esc(l['item'].name)}</b>, {esc(l['portion'])}"
                 + "".join(f"<br><span style='color:#5d6678;font-size:12px'>↔ {esc(s['item'].name)}, {esc(s['portion'])} "
                           f"({s['dcal']:+.0f} cal, {s['dpro']:+.0f} g P)</span>" for s in l["swaps"][:1])
+                + f"<br><span style='font-size:12px'>{l['carbs']:.0f} g carbs · {l['fat']:.0f} g fat · "
+                f"{l['sodium']:,.0f} mg sodium</span>"
                 + f"</td><td {tdn}>{l['cal']:.0f} cal</td><td {tdn}>{l['protein']:.0f} g P</td></tr>"
                 for l in p["lines"])
-            rows += (f"<tr><td {td}><b>Total</b></td><td {tdn}><b>{p['cal']:.0f} cal</b></td>"
+            rows += (f"<tr><td {td}><b>Total</b><br><span style='font-size:12px'>{p['carbs']:.0f} g carbs · "
+                     f"{p['fat']:.0f} g fat · {p['sodium']:,.0f} mg sodium</span></td><td {tdn}><b>{p['cal']:.0f} cal</b></td>"
                      f"<td {tdn}><b>{p['protein']:.0f} g P</b></td></tr>")
             parts.append(f"<p style='margin:10px 0 2px'><b>{head}</b></p><table style='border-collapse:collapse;width:100%'>{rows}</table>")
     url = cfg["email"].get("page_url", "")
@@ -680,14 +728,15 @@ def send_email(subject: str, body_html: str) -> None:
 def serialize(days: list[dict], checked: dt.datetime) -> dict:
     def line(l):
         return {"item": l["item"].name, "station": l["item"].station, "portion": l["portion"],
-                "cal": round(l["cal"]), "protein_g": round(l["protein"]), "fat_g": round(l["fat"]),
+                "cal": round(l["cal"]), "protein_g": round(l["protein"]), "carbs_g": round(l["carbs"]),
+                "fat_g": round(l["fat"]), "sodium_mg": round(l["sodium"]),
                 "swaps": [{"item": s["item"].name, "portion": s["portion"], "cal": round(s["cal"]),
                            "protein_g": round(s["protein"])} for s in l["swaps"]]}
     return {
         "checked_at": checked.isoformat(),
         "days": [{
             "date": d["date"].isoformat(), "cal": round(d["cal"]), "protein_g": round(d["protein"]),
-            "fat_g": round(d["fat"]),
+            "carbs_g": round(d["carbs"]), "fat_g": round(d["fat"]), "sodium_mg": round(d["sodium"]),
             "meals": [{"meal": m["meal"], "status": m["status"], "message": m["message"], "source": m["url"],
                        "items": [line(l) for l in m["plan"]["lines"]] if m["plan"] else []} for m in d["meals"]],
         } for d in days],
@@ -756,7 +805,8 @@ def main() -> int:
 
     for d in days:
         meals = ", ".join(f"{m['meal']}={m['status']}" for m in d["meals"])
-        print(f"{d['date']}: {d['cal']:.0f} cal, {d['protein']:.0f} g P, {d['fat']:.0f} g fat  [{meals}]")
+        print(f"{d['date']}: {d['cal']:.0f} cal, {d['protein']:.0f} g P, {d['carbs']:.0f} g C, {d['fat']:.0f} g fat, "
+              f"{d['sodium']:,.0f} mg Na  [{meals}]")
     for _, msg in status_lines(days):
         print("PROBLEM:", msg)
     print(f"Wrote {out / 'index.html'}")
