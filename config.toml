@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────
+#  ND South Dining Hall meal planner — YOUR SETTINGS
+#  Edit this file on GitHub (pencil icon), click "Commit changes",
+#  and the page + emails pick up the new settings within a few minutes.
+# ─────────────────────────────────────────────────────────────
+
+[targets]
+calories_per_day = 2240
+protein_g_per_day = 165
+# "Low fat": fat budget for the whole day. 62 g ≈ 25% of 2,240 calories.
+fat_max_g_per_day = 62
+# Floor so plans stay healthy (very low-fat days hurt hormones + vitamin absorption).
+fat_min_g_per_day = 40
+
+# How the day's calories/protein are split between meals (should add up to 1.0).
+# On weekends South serves Brunch instead of Breakfast + Lunch; brunch gets both shares.
+[meal_split]
+breakfast = 0.25
+lunch = 0.35
+dinner = 0.40
+
+[food]
+# Allergens / ingredients to avoid completely. An item is skipped if Nutrislice tags it
+# OR its ingredient list mentions it. Choices:
+#   dairy, egg, soy, wheat, sesame, shellfish, fish, peanuts, tree-nuts, pork
+# Example:  avoid = ["peanuts", "tree-nuts"]
+avoid = []
+
+# Diet filter: "" (anything), "vegetarian", or "vegan"
+diet = ""
+
+# Words you never want in an item's name (case-insensitive), e.g. ["mushroom", "tofu"]
+avoid_words = []
+
+# Words you'd like the planner to favor, e.g. ["chicken", "turkey", "salmon"]
+prefer_words = ["chicken", "turkey", "egg whites", "greek yogurt"]
+
+# Exact item names to ignore (use this if an item's listed numbers look wrong to you)
+ignore_items = []
+
+# Skip single items where more than this % of calories come from fat (keeps plans lean).
+max_fat_percent_per_item = 40
+
+[menu]
+# Nutrislice slug for the dining hall (South only for now; North is "north-dining-hall").
+hall = "south-dining-hall"
+hall_name = "South Dining Hall"
+# How many days to show (today + this many more), when Nutrislice has published them.
+days_ahead = 6
+# Stations that aren't useful for meal building (desserts, condiments, duplicate lists).
+exclude_stations = ["Condiments", "Toppings", "Soft Serve", "Dessert", "Pastries",
+                    "Juice", "Gluten Free", "Subs Outs", "Waffle and Pancake Toppings",
+                    "Oatmeal Toppings", "Cereal"]
+
+[email]
+# Morning email with today's plan + tomorrow's preview.
+# Needs the SMTP_USER / SMTP_PASSWORD / EMAIL_TO secrets set on GitHub (see README).
+enabled = true
+send_hour_eastern = 7
+page_url = "https://declan227.github.io/ND-FOOD/"
