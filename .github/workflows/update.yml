@@ -1,0 +1,98 @@
+name: Update meal plan
+
+on:
+  schedule:
+    - cron: "17 * * * *"      # every hour (GitHub may run it a few minutes late)
+  workflow_dispatch:           # "Run workflow" button on the Actions tab
+    inputs:
+      send_email:
+        description: "Send the email now (even if already sent today)"
+        type: boolean
+        default: false
+  push:
+    branches: [main]           # rebuild right away when you edit config.toml
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write               # lets the keep-alive step stop GitHub from pausing the schedule
+
+concurrency:
+  group: meal-plan
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Unit tests (saved real menu snapshot)
+        run: python -m unittest discover tests
+
+      - name: Today's date in Eastern time
+        id: today
+        run: echo "date=$(TZ=America/New_York date +%F)" >> "$GITHUB_OUTPUT"
+
+      # Remembers whether today's email already went out, so it's sent once per day.
+      - name: Restore "email sent" marker
+        id: marker
+        uses: actions/cache/restore@v4
+        with:
+          path: .state
+          key: email-sent-${{ steps.today.outputs.date }}
+
+      - name: Fetch menus, build plan, send email if due
+        id: build
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: |
+          set +e
+          if [ "${{ inputs.send_email }}" = "true" ]; then
+            python mealplan.py --out site --send-email
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            python mealplan.py --out site --email-if-due
+          else
+            python mealplan.py --out site
+          fi
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Save "email sent" marker
+        if: steps.marker.outputs.cache-hit != 'true' && hashFiles('.state/*') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .state
+          key: email-sent-${{ steps.today.outputs.date }}
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Publish webpage
+        id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Keep the hourly schedule alive
+        # GitHub pauses scheduled workflows after 60 days without repo activity; re-enabling resets that.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/update.yml/enable"
+
+      - name: Fail loudly if email sending failed
+        # A red X here makes GitHub email you about the failed run.
+        if: steps.build.outputs.code != '0'
+        run: |
+          echo "::error::mealplan.py exited with ${{ steps.build.outputs.code }}; see the 'Fetch menus' step log."
+          exit 1
