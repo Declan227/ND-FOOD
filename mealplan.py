@@ -404,6 +404,7 @@ class Planner:
 
     def swaps(self, it: Item, servings: float, role: str, pool: list[Item], chosen: set[str]) -> list[dict]:
         base_cal, base_pro = it.cal * servings, it.protein * servings
+        base_fat, base_na = it.fat * servings, it.sodium * servings
         out = []
         for alt in pool:
             if alt.name in chosen:
@@ -412,7 +413,10 @@ class Planner:
             dc, dp = alt.cal * s - base_cal, alt.protein * s - base_pro
             key = abs(dc) + (4 * abs(dp) if role == "protein" else abs(dp))
             out.append((key, {"item": alt, "portion": describe_portion(alt, s),
-                              "cal": alt.cal * s, "protein": alt.protein * s, "dcal": dc, "dpro": dp}))
+                              "cal": alt.cal * s, "protein": alt.protein * s,
+                              "fat": alt.fat * s, "sodium": alt.sodium * s,
+                              "dcal": dc, "dpro": dp,
+                              "dfat": alt.fat * s - base_fat, "dna": alt.sodium * s - base_na}))
         return [o for _, o in sorted(out, key=lambda x: x[0])[:2]]
 
     def plan_day(self, day: dt.date, menus: dict[str, MenuResult], recent: dict[str, set[str]] | None = None) -> dict:
@@ -546,10 +550,7 @@ def render_meal(m: dict, cfg: dict) -> str:
     rows = []
     for l in p["lines"]:
         it = l["item"]
-        swaps = "".join(
-            f"<div class='swap'>↔ swap: {esc(s['item'].name)}, {esc(s['portion'])} "
-            f"({s['cal']:.0f} cal, {s['protein']:.0f} g P; {s['dcal']:+.0f} cal, {s['dpro']:+.0f} g P)</div>"
-            for s in l["swaps"])
+        swaps = "".join(f"<div class='swap'>{swap_text(s)}</div>" for s in l["swaps"])
         rows.append(
             f"<tr><td><b>{esc(it.name)}</b><span class='tag'>{esc(it.station)}</span>"
             f"<div class='small muted'>{esc(l['portion'])}</div>{macro_line(l)}{swaps}</td>{macro_cells(l)}</tr>")
@@ -564,6 +565,21 @@ def render_meal(m: dict, cfg: dict) -> str:
     heads = "".join(f"<th class='n'>{h}</th>" for h in ("Cal", "Protein", "Carbs", "Fat", "Sodium"))
     return (f"<section class='meal'>{head}<table><tr><th>Item & portion</th>{heads}</tr>"
             f"{''.join(rows)}</table>{extra}</section>")
+
+
+def change(delta: float, unit: str, what: str, more: str = "more", less: str = "less") -> str:
+    """'13 fewer cal', '5 g less protein', 'same fat'."""
+    if round(abs(delta)) == 0:
+        return f"same {what}"
+    return f"{abs(delta):,.0f}{unit} {more if delta > 0 else less} {what}"
+
+
+def swap_text(s: dict) -> str:
+    """One swap suggestion, with its own numbers and how the meal total would change."""
+    diffs = ", ".join([change(s["dcal"], "", "cal", "more", "fewer"), change(s["dpro"], " g", "protein"),
+                       change(s["dfat"], " g", "fat"), change(s["dna"], " mg", "sodium")])
+    return (f"↔ Or instead: <b>{esc(s['item'].name)}</b>, {esc(s['portion'])}: {s['cal']:.0f} cal · "
+            f"{s['protein']:.0f} g protein · {s['fat']:.0f} g fat · {s['sodium']:,.0f} mg sodium ({diffs})")
 
 
 def macro_cells(x: dict) -> str:
@@ -687,8 +703,7 @@ def render_email(days: list[dict], cfg: dict, today: dt.date, checked: dt.dateti
             p = m["plan"]
             rows = "".join(
                 f"<tr><td {td}><b>{esc(l['item'].name)}</b>, {esc(l['portion'])}"
-                + "".join(f"<br><span style='color:#5d6678;font-size:12px'>↔ {esc(s['item'].name)}, {esc(s['portion'])} "
-                          f"({s['dcal']:+.0f} cal, {s['dpro']:+.0f} g P)</span>" for s in l["swaps"][:1])
+                + "".join(f"<br><span style='color:#5d6678;font-size:12px'>{swap_text(s)}</span>" for s in l["swaps"][:1])
                 + f"<br><span style='font-size:12px'>{l['carbs']:.0f} g carbs · {l['fat']:.0f} g fat · "
                 f"{l['sodium']:,.0f} mg sodium</span>"
                 + f"</td><td {tdn}>{l['cal']:.0f} cal</td><td {tdn}>{l['protein']:.0f} g P</td></tr>"
@@ -731,7 +746,8 @@ def serialize(days: list[dict], checked: dt.datetime) -> dict:
                 "cal": round(l["cal"]), "protein_g": round(l["protein"]), "carbs_g": round(l["carbs"]),
                 "fat_g": round(l["fat"]), "sodium_mg": round(l["sodium"]),
                 "swaps": [{"item": s["item"].name, "portion": s["portion"], "cal": round(s["cal"]),
-                           "protein_g": round(s["protein"])} for s in l["swaps"]]}
+                           "protein_g": round(s["protein"]), "fat_g": round(s["fat"]),
+                           "sodium_mg": round(s["sodium"])} for s in l["swaps"]]}
     return {
         "checked_at": checked.isoformat(),
         "days": [{
