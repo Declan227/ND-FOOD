@@ -59,6 +59,6 @@ exclude_stations = ["Condiments", "Toppings", "Soft Serve", "Dessert", "Pastries
 [email]
 # Morning email with today's plan + tomorrow's preview.
 # Needs the SMTP_USER / SMTP_PASSWORD / EMAIL_TO secrets set on GitHub (see README).
-enabled = true
+enabled = false   # set to true (and add the secrets in the README) if you ever want the email
 send_hour_eastern = 7
 page_url = "https://declan227.github.io/ND-FOOD/"
