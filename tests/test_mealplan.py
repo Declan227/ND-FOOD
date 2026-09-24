@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 import mealplan  # noqa: E402
 
 FIXTURE = json.loads((ROOT / "tests/fixtures/south_2026-09-20_week.json").read_text())
-CFG = tomllib.loads((ROOT / "config.toml").read_text())
+CFG = tomllib.loads((ROOT / "tests/test_config.toml").read_text())
 WED, SAT = dt.date(2026, 9, 23), dt.date(2026, 9, 26)
 
 
@@ -120,6 +120,34 @@ class PlanningTests(unittest.TestCase):
     def test_swaps_offered(self):
         lines = all_lines(plan(WED))
         self.assertTrue(all(l["swaps"] for l in lines if l["role"] == "protein"))
+
+
+class SodiumAndCarbsTests(unittest.TestCase):
+    def test_sodium_and_carbs_parsed(self):
+        items = mealplan.get_menu(FakeFetcher(), "dinner", WED).items
+        gc = next(i for i in items if i.name == "Signature Grilled Cheese")
+        self.assertEqual((gc.carbs, gc.sodium), (34.0, 1673.0))
+
+    def test_sodium_limit_lowers_sodium(self):
+        no_limit = copy.deepcopy(CFG)
+        no_limit["targets"]["sodium_max_mg_per_day"] = 0
+        limited = copy.deepcopy(CFG)
+        limited["targets"]["sodium_max_mg_per_day"] = 2300
+        free, capped = plan(WED, no_limit), plan(WED, limited)
+        self.assertLess(capped["sodium"], free["sodium"])
+        self.assertLess(capped["sodium"], 2300 * 1.3)  # soft limit: close, not forced
+        self.assertAlmostEqual(capped["cal"], 2240, delta=150)
+        self.assertGreaterEqual(capped["protein"], 165 * 0.95)
+
+    def test_page_and_email_show_carbs_and_sodium(self):
+        d = plan(WED)
+        now = dt.datetime(2026, 9, 23, 7, 0, tzinfo=mealplan.EASTERN)
+        page = mealplan.render_page([d], CFG, WED, now)
+        for text in ("<th class='n'>Carbs</th>", "<th class='n'>Sodium</th>", "mg sodium", "g carbs"):
+            self.assertIn(text, page)
+        _, email = mealplan.render_email([d], CFG, WED, now)
+        self.assertIn(f"{d['sodium']:,.0f} mg sodium", email)
+        self.assertIn(f"{d['carbs']:.0f} g carbs", email)
 
 
 class FailureReportingTests(unittest.TestCase):

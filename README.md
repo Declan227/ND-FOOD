@@ -2,13 +2,13 @@
 
 Builds a daily **breakfast / lunch / dinner plan** (brunch + dinner on weekends) from the
 **official South Dining Hall menu** for that day. The default goal is about **2,240 calories,
-165 g protein, lean (40–62 g fat)**. You get:
+165 g protein, lean (40–62 g fat), sodium kept near 2,300 mg**. You get:
 
 - **A webpage** (bookmark it on your phone): https://declan227.github.io/ND-FOOD/
   It covers today, tomorrow, and every later day Notre Dame has published, and it refreshes about every hour.
 - **A morning email** (7 AM Eastern) with today's plan plus a preview of tomorrow.
 
-Each plan shows the dining hall, meal period, items, portion, calories, protein and fat. It also
+Each plan shows the dining hall, meal period, items, portion, calories, protein, carbs, fat and sodium. It also
 suggests easy swaps and links to the exact official menu page each number came from.
 
 ## Where the data comes from (and its limits)
@@ -72,6 +72,8 @@ Edit **`config.toml`** on GitHub: open the file, click the pencil ✏️, then *
 page updates within a couple of minutes.
 
 - `calories_per_day`, `protein_g_per_day`, `fat_max_g_per_day`, `fat_min_g_per_day`
+- `sodium_max_mg_per_day`: a softer limit than fat. The planner picks lower-sodium options but won't force a bad meal to hit it (0 = ignore sodium)
+- `max_fat_percent_per_item`: drops individual items that are mostly fat (fried or cheesy food)
 - `[meal_split]`: how much of the day goes to breakfast, lunch and dinner
 - `avoid`: allergens, e.g. `["peanuts", "tree-nuts", "shellfish"]`
 - `diet`: `"vegetarian"` or `"vegan"`
