@@ -6,12 +6,12 @@
 
 [targets]
 calories_per_day = 2240
-protein_g_per_day = 165
+protein_g_per_day = 170
 # "Low fat": fat budget for the whole day. 62 g ≈ 25% of 2,240 calories.
 fat_max_g_per_day = 62
 # Floor so plans stay healthy (very low-fat days hurt hormones + vitamin absorption).
 fat_min_g_per_day = 40
-
+sodium_max_mg_per_day = 2000
 # How the day's calories/protein are split between meals (should add up to 1.0).
 # On weekends South serves Brunch instead of Breakfast + Lunch; brunch gets both shares.
 [meal_split]
@@ -30,7 +30,7 @@ avoid = []
 diet = ""
 
 # Words you never want in an item's name (case-insensitive), e.g. ["mushroom", "tofu"]
-avoid_words = []
+avoid_words = ["deli", "ham", "smoked"]
 
 # Words you'd like the planner to favor, e.g. ["chicken", "turkey", "salmon"]
 prefer_words = ["chicken", "turkey", "egg whites", "greek yogurt"]
