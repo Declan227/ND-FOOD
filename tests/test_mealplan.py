@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 import mealplan  # noqa: E402
 
 FIXTURE = json.loads((ROOT / "tests/fixtures/south_2026-09-20_week.json").read_text())
-CFG = tomllib.loads((ROOT / "config.toml").read_text())
+CFG = tomllib.loads((ROOT / "tests/test_config.toml").read_text())
 WED, SAT = dt.date(2026, 9, 23), dt.date(2026, 9, 26)
 
 

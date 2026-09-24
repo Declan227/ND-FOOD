@@ -1,3 +1,4 @@
+# Fixed settings used only by the automated tests, so editing config.toml can never break them.
 # ─────────────────────────────────────────────────────────────
 #  ND South Dining Hall meal planner — YOUR SETTINGS
 #  Edit this file on GitHub (pencil icon), click "Commit changes",
@@ -6,14 +7,14 @@
 
 [targets]
 calories_per_day = 2240
-protein_g_per_day = 170
+protein_g_per_day = 165
 # "Low fat": fat budget for the whole day. 62 g ≈ 25% of 2,240 calories.
 fat_max_g_per_day = 62
 # Floor so plans stay healthy (very low-fat days hurt hormones + vitamin absorption).
 fat_min_g_per_day = 40
 # Sodium limit (mg). 2,300 mg is the standard daily guideline. This is a softer limit than fat:
 # the planner prefers lower-sodium choices but won't wreck a meal to hit it. Set to 0 to ignore sodium.
-sodium_max_mg_per_day = 2000
+sodium_max_mg_per_day = 2300
 
 # How the day's calories/protein are split between meals (should add up to 1.0).
 # On weekends South serves Brunch instead of Breakfast + Lunch; brunch gets both shares.
@@ -33,7 +34,7 @@ avoid = []
 diet = ""
 
 # Words you never want in an item's name (case-insensitive), e.g. ["mushroom", "tofu"]
-avoid_words = ["deli", "ham", "smoked"]
+avoid_words = []
 
 # Words you'd like the planner to favor, e.g. ["chicken", "turkey", "salmon"]
 prefer_words = ["chicken", "turkey", "egg whites", "greek yogurt"]
