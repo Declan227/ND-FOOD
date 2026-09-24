@@ -121,6 +121,14 @@ class PlanningTests(unittest.TestCase):
         lines = all_lines(plan(WED))
         self.assertTrue(all(l["swaps"] for l in lines if l["role"] == "protein"))
 
+    def test_swap_text_explains_changes(self):
+        s = {"item": mealplan.Item("Bananas", "Whole Fruit", "lunch", "", 141, 1, 0.4, 36, 1, 1, "banana", set(), ""),
+             "portion": "1 banana", "cal": 141, "protein": 1, "fat": 0.4, "sodium": 1,
+             "dcal": -13, "dpro": -5, "dfat": 0.1, "dna": -289}
+        text = mealplan.swap_text(s)
+        self.assertIn("Or instead: <b>Bananas</b>, 1 banana: 141 cal · 1 g protein · 0 g fat · 1 mg sodium", text)
+        self.assertIn("(13 fewer cal, 5 g less protein, same fat, 289 mg less sodium)", text)
+
 
 class SodiumAndCarbsTests(unittest.TestCase):
     def test_sodium_and_carbs_parsed(self):
